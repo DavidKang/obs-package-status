@@ -71,6 +71,7 @@ package_status = true
 skip_cover_update = false
 
 trello_card_content = "Visit project: #{config_get("obs_project_link")}\n\n"
+trello_card_content += "Last status scan: #{Time.now}\n\n"
 
 repos.each do |repo|
   status_list.each do |item|
