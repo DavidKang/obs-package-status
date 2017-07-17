@@ -35,18 +35,15 @@ trello_cover_error_name="
   nil
 end
 
+# Get status of building
 api_uri = URI("https://api.opensuse.org/build/OBS:Server:Unstable/_result?multibuild=1&locallink=1&package=obs-server")
 request = Net::HTTP::Get.new(api_uri)
 request.basic_auth config_get('obs_user'), config_get('obs_password')
+response = Net::HTTP.start(api_uri.hostname, api_uri.port, use_ssl: true) { |http| http.request(request) }
 
-response = Net::HTTP.start(api_uri.hostname, api_uri.port, use_ssl: true) {|http|
-  http.request(request)
-}
-
-resultlist = Nokogiri::XML(response.body)
-
+# Parse XML from OBS
 status_list = []
-resultlist.xpath('//resultlist/result').each do |result|
+Nokogiri::XML(response.body).xpath('//resultlist/result').each do |result|
   code = result.xpath("./status").map {|element| element.attributes["code"].value if element.attributes["package"].value == "obs-server" }.first
   if code == "disabled"
     next
@@ -59,20 +56,20 @@ resultlist.xpath('//resultlist/result').each do |result|
   })
 end
 
+#Calculate repositories to check from config
 repos = []
-config_repos = config_get("repos")
-
-config_repos.split(",").each do |repo|
+config_get("repos").split(",").each do |repo|
   data = repo.split(":")
   repos.push({ repository: data[0], arch: data[1] })
 end
 
-package_status = true
+package_successfully_built = true
 skip_cover_update = false
 
 trello_card_content = "Visit project: #{config_get("obs_project_link")}\n\n"
 trello_card_content += "Last status scan: #{Time.now}\n\n"
 
+# Check the status of each repository
 repos.each do |repo|
   status_list.each do |item|
     if item[:repository] == repo[:repository] && item[:arch] == repo[:arch]
@@ -84,7 +81,7 @@ repos.each do |repo|
       end
 
       if item[:code] == "unresolvable" || item[:code] == "failed"
-        package_status = false
+        package_successfully_built = false
       end
     end
   end
@@ -93,33 +90,44 @@ end
 trello_card_id = config_get("trello_card_id")
 trello_key = config_get("trello_api_key")
 trello_token = config_get("trello_api_token")
+credentials_query = "key=#{trello_key}&token=#{trello_token}"
 
-if skip_cover_update == false
-  attachment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/attachments?key=#{trello_key}&token=#{trello_token}")
-  request = Net::HTTP::Get.new(attachment_uri)
-  response = Net::HTTP.start(attachment_uri.hostname, attachment_uri.port, use_ssl: true) {|http|
-    http.request(request)
-  }
+# Update the card if changed the status
+unless skip_cover_update
+  cover_file_name = package_successfully_built ? config_get("trello_cover_success_name") : config_get("trello_cover_error_name")
 
-  cover_file_name = config_get("trello_cover_success_name")
-  cover_file_name = config_get("trello_cover_error_name") if package_status == false
+  # Get the attachments in the card
+  attachment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/attachments?#{credentials_query}")
+  response = Net::HTTP.start(attachment_uri.hostname, attachment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Get.new(attachment_uri)) }
+  attachments = JSON.parse(response.body)
+  cover_id = attachments.select { |image| image["name"] == cover_file_name }.first["id"]
 
-  response = JSON.parse(response.body)
-  cover_id = response.select {|image| image if image["name"] == cover_file_name }.first["id"]
+  # Update the cover
+  cover_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/idAttachmentCover?value=#{cover_id}&#{credentials_query}")
+  Net::HTTP.start(cover_uri.hostname, cover_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Put.new(cover_uri)) }
 
-  cover_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/idAttachmentCover?value=#{cover_id}&key=#{trello_key}&token=#{trello_token}")
-  request = Net::HTTP::Put.new(cover_uri)
-  response = Net::HTTP.start(cover_uri.hostname, cover_uri.port, use_ssl: true) {|http|
-    http.request(request)
-  }
+  # Get all the comments in the card
+  comments_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions?filter=commentCard&#{credentials_query}")
+  response = Net::HTTP.start(comments_uri.hostname, comments_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Get.new(comments_uri)) }
+  comments = JSON.parse(response.body)
+  last_comment = comments.last
+
+  # Remove the last comment if there are any
+  if last_comment
+    remove_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/#{last_comment["id"]}/comments?#{credentials_query}")
+    Net::HTTP.start(remove_comment_uri.hostname, remove_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Delete.new(remove_comment_uri)) }
+  end
+
+  # Insert a new comment with the status
+  comment_text = package_successfully_built ? " **Passed** :smiley: " : "**Failed** :sob:"
+  new_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}")
+  Net::HTTP.start(new_comment_uri.hostname, new_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Post.new(new_comment_uri)) }
 end
 
-card_desc_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/desc?key=#{trello_key}&token=#{trello_token}")
+# Update description and content of the card always
+card_desc_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/desc?#{credentials_query}")
 request = Net::HTTP::Put.new(card_desc_uri)
 request.set_form_data({
   "value" => trello_card_content
 })
-response = Net::HTTP.start(card_desc_uri.hostname, card_desc_uri.port, use_ssl: true) {|http|
-  http.request(request)
-}
-
+Net::HTTP.start(card_desc_uri.hostname, card_desc_uri.port, use_ssl: true) { |http| http.request(request) }
