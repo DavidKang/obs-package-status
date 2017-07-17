@@ -1,8 +1,8 @@
 # Ignore the config in the repository
 .bash_history
-error.log
 .bashrc
 .bundle/
 .gem/
 .viminfo
 config
+error.log

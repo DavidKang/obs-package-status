@@ -120,7 +120,7 @@ unless skip_cover_update
 
   # Insert a new comment with the status
   comment_text = package_successfully_built ? " **Passed** :smiley: " : "**Failed** :sob:"
-  new_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}")
+  new_comment_uri = URI(URI.escape("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}"))
   Net::HTTP.start(new_comment_uri.hostname, new_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Post.new(new_comment_uri)) }
 end
 
