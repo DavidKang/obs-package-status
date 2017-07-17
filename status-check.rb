@@ -92,7 +92,7 @@ trello_key = config_get("trello_api_key")
 trello_token = config_get("trello_api_token")
 credentials_query = "key=#{trello_key}&token=#{trello_token}"
 
-# Update the card if changed the status
+# Update the card cover and comments if needed
 unless skip_cover_update
   cover_file_name = package_successfully_built ? config_get("trello_cover_success_name") : config_get("trello_cover_error_name")
 
@@ -112,16 +112,21 @@ unless skip_cover_update
   comments = JSON.parse(response.body)
   last_comment = comments.last
 
-  # Remove the last comment if there are any
-  if last_comment
+  status_regexp = package_successfully_built ? /Passed/ : /Failed/
+  status_changed = comments.any? && (comments.first["data"]["text"] =~ status_regexp).nil?
+
+  # Remove the last comment if any and the status changed
+  if last_comment && status_changed
     remove_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/#{last_comment["id"]}/comments?#{credentials_query}")
     Net::HTTP.start(remove_comment_uri.hostname, remove_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Delete.new(remove_comment_uri)) }
   end
 
-  # Insert a new comment with the status
-  comment_text = package_successfully_built ? " **Passed** :smiley: " : "**Failed** :sob:"
-  new_comment_uri = URI(URI.escape("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}"))
-  Net::HTTP.start(new_comment_uri.hostname, new_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Post.new(new_comment_uri)) }
+  # Add the comment if is the first time or the status changed
+  if comments.empty? || status_changed
+    comment_text = package_successfully_built ? " **Passed** :smiley: " : "**Failed** :sob:"
+    new_comment_uri = URI(URI.escape("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}"))
+    Net::HTTP.start(new_comment_uri.hostname, new_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Post.new(new_comment_uri)) }
+  end
 end
 
 # Update description and content of the card always
