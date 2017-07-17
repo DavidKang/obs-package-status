@@ -4,7 +4,7 @@ require 'nokogiri'
 require 'json'
 
 def config_get(key)
-  path = File.expand_path(File.dirname(File.dirname(__FILE__))) + "/config"
+  path = File.expand_path(File.dirname(__FILE__)) + "/config"
   if !File.exists?(path)
     $stderr.puts "Please adapt the config file first. It got generated in the directory of the script."
 
