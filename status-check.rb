@@ -110,21 +110,25 @@ unless skip_cover_update
   comments_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions?filter=commentCard&#{credentials_query}")
   response = Net::HTTP.start(comments_uri.hostname, comments_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Get.new(comments_uri)) }
   comments = JSON.parse(response.body)
-  last_comment = comments.last
 
   status_regexp = package_successfully_built ? /Passed/ : /Failed/
   status_changed = comments.any? && (comments.first["data"]["text"] =~ status_regexp).nil?
+  status_changed_to_failed = !package_successfully_built && status_changed
 
-  # Remove the last comment if any and the status changed
-  if last_comment && status_changed
-    remove_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/#{last_comment["id"]}/comments?#{credentials_query}")
-    Net::HTTP.start(remove_comment_uri.hostname, remove_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Delete.new(remove_comment_uri)) }
+  # Remove the comments
+  if status_changed
+    comments.each do |comment|
+      remove_comment_uri = URI("https://api.trello.com/1/cards/#{trello_card_id}/actions/#{comment["id"]}/comments?#{credentials_query}")
+      Net::HTTP.start(remove_comment_uri.hostname, remove_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Delete.new(remove_comment_uri)) }
+    end
   end
 
-  # Add the comment if is the first time or the status changed
+  # Add the comment
   if comments.empty? || status_changed
-    comment_text = package_successfully_built ? " **Passed** :smiley: " : "**Failed** :sob:"
-    new_comment_uri = URI(URI.escape("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=@board the build has #{comment_text}&#{credentials_query}"))
+    notify_to_board = status_changed_to_failed ? "@board" : ""
+    status_text = package_successfully_built ? "**Passed** :smiley: " : "**Failed** :sob:"
+    comment_text = "#{notify_to_board} the build has #{status_text}"
+    new_comment_uri = URI(URI.escape("https://api.trello.com/1/cards/#{trello_card_id}/actions/comments?text=#{comment_text}&#{credentials_query}"))
     Net::HTTP.start(new_comment_uri.hostname, new_comment_uri.port, use_ssl: true) { |http| http.request(Net::HTTP::Post.new(new_comment_uri)) }
   end
 end
